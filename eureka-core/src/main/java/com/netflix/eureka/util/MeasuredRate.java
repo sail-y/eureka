@@ -53,6 +53,8 @@ public class MeasuredRate {
                 @Override
                 public void run() {
                     try {
+                        // 每分钟一次，设置到lastBucket中，currentBucket设置为0
+                        // lastBucket是用来读的，currentBucket是用来写的
                         // Zero out the current bucket.
                         lastBucket.set(currentBucket.getAndSet(0));
                     } catch (Throwable e) {
@@ -83,6 +85,7 @@ public class MeasuredRate {
      * Increments the count in the current sample interval.
      */
     public void increment() {
+        // 心跳 + 1
         currentBucket.incrementAndGet();
     }
 }

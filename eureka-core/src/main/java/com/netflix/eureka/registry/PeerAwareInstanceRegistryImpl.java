@@ -210,12 +210,15 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
         for (int i = 0; ((i < serverConfig.getRegistrySyncRetries()) && (count == 0)); i++) {
             if (i > 0) {
                 try {
+                    // 如果第一次没有在本地的eureka client 中获取任何注册表
+                    // 那么就等待30秒，看DiscoveryClient.fetchRegistry是否已经执行完成。
                     Thread.sleep(serverConfig.getRegistrySyncRetryWaitMs());
                 } catch (InterruptedException e) {
                     logger.warn("Interrupted during registry transfer..");
                     break;
                 }
             }
+            // 这是读取的eureka client在本地初始化的时候拉取的全量注册表缓存。
             Applications apps = eurekaClient.getApplications();
             for (Application app : apps.getRegisteredApplications()) {
                 for (InstanceInfo instance : app.getInstances()) {
@@ -236,7 +239,9 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
     @Override
     public void openForTraffic(ApplicationInfoManager applicationInfoManager, int count) {
         // Renewals happen every 30 seconds and for a minute it should be a factor of 2.
+        // 如果心跳时间间隔修改了怎么办？这里不应该硬编码，应该用心跳间隔时间作来计算。
         this.expectedNumberOfRenewsPerMin = count * 2;
+        // count * 2 * 0.85
         this.numberOfRenewsPerMinThreshold =
                 (int) (this.expectedNumberOfRenewsPerMin * serverConfig.getRenewalPercentThreshold());
         logger.info("Got " + count + " instances from neighboring DS node");
@@ -408,6 +413,7 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
             leaseDuration = info.getLeaseInfo().getDurationInSecs();
         }
         super.register(info, leaseDuration, isReplication);
+        // 将注册信息同步到其他集群节点
         replicateToPeers(Action.Register, info.getAppName(), info.getId(), info, null, isReplication);
     }
 
@@ -478,10 +484,17 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
 
     @Override
     public boolean isLeaseExpirationEnabled() {
+        // 如果关闭自我保护机制，随时可以清理实例
         if (!isSelfPreservationModeEnabled()) {
             // The self preservation mode is disabled, hence allowing the instances to expire.
             return true;
         }
+
+        // 会触发自我保护机制
+        // numberOfRenewsPerMinThreshold 期望所有服务实例1分钟要有发送多少次心跳过来
+        // getNumOfRenewsInLastMin() 上1分钟所有服务实例一共发送多少次心跳
+        // 如果上一分钟的心跳次数（假设是102次） > 我所期望的心跳次数，那么返回true，就可以清理服务实例
+        // 如果上次心跳次数（假设20次） < 我期望的100次，此时返回false，表示不清理服务实例。
         return numberOfRenewsPerMinThreshold > 0 && getNumOfRenewsInLastMin() > numberOfRenewsPerMinThreshold;
     }
 
@@ -520,6 +533,7 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      */
     private void updateRenewalThreshold() {
         try {
+            // 从别的服务拉取注册表
             Applications apps = eurekaClient.getApplications();
             int count = 0;
             for (Application app : apps.getRegisteredApplications()) {
@@ -532,6 +546,7 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
             synchronized (lock) {
                 // Update threshold only if the threshold is greater than the
                 // current expected threshold of if the self preservation is disabled.
+                // 如果拉取到的服务实例数量，大于本地的期望的服务实例数量*0.85，我觉得这里是不是写错了，numberOfRenewsPerMinThreshold本来就是count*2*0.85，再*0.85？？？
                 if ((count * 2) > (serverConfig.getRenewalPercentThreshold() * numberOfRenewsPerMinThreshold)
                         || (!this.isSelfPreservationModeEnabled())) {
                     this.expectedNumberOfRenewsPerMin = count * 2;
@@ -628,6 +643,7 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
                 return;
             }
 
+            // 循环所有配置的集群节点信息，并排除自己
             for (final PeerEurekaNode node : peerEurekaNodes.getPeerEurekaNodes()) {
                 // If the url represents this host, do not replicate to yourself.
                 if (peerEurekaNodes.isThisMyUrl(node.getServiceUrl())) {

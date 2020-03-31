@@ -142,6 +142,8 @@ public class DiscoveryClient implements EurekaClient {
     private final ThreadPoolExecutor heartbeatExecutor;
     private final ThreadPoolExecutor cacheRefreshExecutor;
 
+    // 有很多数据结构，可以通过appName获取Application
+    // 也可以通过主机名获取Application
     private final Provider<HealthCheckHandler> healthCheckHandlerProvider;
     private final Provider<HealthCheckCallback> healthCheckCallbackProvider;
     private final PreRegistrationHandler preRegistrationHandler;
@@ -393,6 +395,7 @@ public class DiscoveryClient implements EurekaClient {
             );  // use direct handoff
 
             eurekaTransport = new EurekaTransport();
+            // 其实是初始化eurekaTransport
             scheduleServerEndpointTask(eurekaTransport, args);
 
             AzToRegionMapper azToRegionMapper;
@@ -409,6 +412,7 @@ public class DiscoveryClient implements EurekaClient {
             throw new RuntimeException("Failed to initialize DiscoveryClient!", e);
         }
 
+        // 按理说在这里有拉取注册表的代码，但是却没有找到服务注册的代码在哪里。
         if (clientConfig.shouldFetchRegistry() && !fetchRegistry(false)) {
             fetchRegistryFromBackup();
         }
@@ -865,22 +869,28 @@ public class DiscoveryClient implements EurekaClient {
         if (isShutdown.compareAndSet(false, true)) {
             logger.info("Shutting down DiscoveryClient ...");
 
+            // 取消一些监听器
             if (statusChangeListener != null && applicationInfoManager != null) {
                 applicationInfoManager.unregisterStatusChangeListener(statusChangeListener.getId());
             }
 
+            // 关闭一些线程池
             cancelScheduledTasks();
 
             // If APPINFO was registered
             if (applicationInfoManager != null && clientConfig.shouldRegisterWithEureka()) {
+                // 把状态设置为DOWN
                 applicationInfoManager.setInstanceStatus(InstanceStatus.DOWN);
+                // 服务下线
                 unregister();
             }
 
+            // 关闭网络组建
             if (eurekaTransport != null) {
                 eurekaTransport.shutdown();
             }
 
+            // 关闭监控
             heartbeatStalenessMonitor.shutdown();
             registryStalenessMonitor.shutdown();
 
@@ -1058,11 +1068,13 @@ public class DiscoveryClient implements EurekaClient {
         long currentUpdateGeneration = fetchRegistryGeneration.get();
 
         Applications delta = null;
+        // 会拿到最近3分钟内有变化的服务实例的注册表
         EurekaHttpResponse<Applications> httpResponse = eurekaTransport.queryClient.getDelta(remoteRegionsRef.get());
         if (httpResponse.getStatusCode() == Status.OK.getStatusCode()) {
             delta = httpResponse.getEntity();
         }
 
+        // 如果是null，就去获取全量注册表
         if (delta == null) {
             logger.warn("The server does not allow the delta revision to be applied because it is not safe. "
                     + "Hence got the full registry.");
@@ -1271,6 +1283,7 @@ public class DiscoveryClient implements EurekaClient {
                     renewalIntervalInSecs, TimeUnit.SECONDS);
 
             // InstanceInfo replicator
+            // 这里才是实际注册到eureka server的代码。
             instanceInfoReplicator = new InstanceInfoReplicator(
                     this,
                     instanceInfo,

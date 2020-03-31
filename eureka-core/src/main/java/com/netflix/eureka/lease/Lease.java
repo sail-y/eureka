@@ -60,6 +60,7 @@ public class Lease<T> {
      * {@link #DEFAULT_DURATION_IN_SECS}.
      */
     public void renew() {
+        // 每次心跳，就是更新这个时间，duration默认值就是90s
         lastUpdateTimestamp = System.currentTimeMillis() + duration;
 
     }
@@ -108,6 +109,11 @@ public class Lease<T> {
      * @param additionalLeaseMs any additional lease time to add to the lease evaluation in ms.
      */
     public boolean isExpired(long additionalLeaseMs) {
+        // lastUpdateTimestamp上次心跳时间+90秒+比预期的任务时间晚了多少秒。
+        // 看似这里的逻辑是，在不计算预期任务执行的时间情况下，90s没有收到过心跳就认为已经过期
+        // 但是看上面的注释，其实这里是有一个bug，因为在心跳的时候，时间就已经+了duration，比如上次心跳的时间 22:47:44，那么lastUpdateTimestamp就是22:49:14
+        // 所以在这里判断的时候，真正判断的过期时间是22:50:44，相比上次心跳，已经是过去了180s的时间。
+        // 并且这个bug不打算修复
         return (evictionTimestamp > 0 || System.currentTimeMillis() > (lastUpdateTimestamp + duration + additionalLeaseMs));
     }
 
